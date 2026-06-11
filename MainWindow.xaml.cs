@@ -1,9 +1,11 @@
 ﻿using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -15,22 +17,25 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _timer = new();
     private bool _isUpdating;
     private CancellationTokenSource? _cts;
+    private MonitorWindow? _monitorWindow;
+    private bool _isMonitorOn;
     private static readonly string ConfigPath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                      "GpuMonitor", "config.json");
 
     // 配置数据结构
-    private record AppConfig(string Host, string User, string Password, int Port, int IntervalSeconds);
+    private record AppConfig(string Host, string User, string Password, int Port, int IntervalSeconds,
+        int? WindowX = null, int? WindowY = null,
+        string OverlayEdge = "Right", bool OverlayCompact = false, double OverlayOpacity = 0.7,
+        string OverlayAlignment = "Center");
 
     public MainWindow()
     {
         Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] === GPU Monitor 启动 ===");
         InitializeComponent();
 
-        // 加载配置
         LoadConfig();
 
-        // 设置定时器
         _timer.Tick += async (_, _) =>
         {
             try { await RefreshGpuData(); }
@@ -41,6 +46,16 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [UI] Window_Loaded");
+
+        // 注册全局热键 Ctrl+Shift+G
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var source = HwndSource.FromHwnd(hwnd);
+        source?.AddHook(WndProc);
+        RegisterHotKey(hwnd);
+
+        // 系统托盘（必须在 HWND 就绪后创建）
+        SetupSystemTray(hwnd);
+
         if (string.IsNullOrWhiteSpace(_ssh.Host) || string.IsNullOrWhiteSpace(_ssh.UserName))
         {
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [UI] 无已保存配置，展开设置面板");
@@ -95,8 +110,7 @@ public partial class MainWindow : Window
 
     private void BtnClose_Click(object sender, RoutedEventArgs e)
     {
-        _cts?.Cancel();
-        _timer.Stop();
+        // 最小化到系统托盘
         Hide();
     }
 
@@ -105,6 +119,15 @@ public partial class MainWindow : Window
         SaveConfig();
         SettingsPanel.Visibility = Visibility.Collapsed;
         StartMonitoring();
+
+        // 如果监控覆盖层已开启，自动重启以应用新设置
+        if (_isMonitorOn && _monitorWindow != null)
+        {
+            _monitorWindow.Close();
+            _monitorWindow = null;
+            OpenMonitorOverlay(applySettings: true);
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [OVERLAY] 设置已更新，覆盖层已重启(不最小化)");
+        }
     }
 
     private async void BtnTestConn_Click(object sender, RoutedEventArgs e)
@@ -141,6 +164,11 @@ public partial class MainWindow : Window
         BtnRefresh.IsEnabled = false;
         await RefreshGpuData();
         BtnRefresh.IsEnabled = true;
+    }
+
+    private void BtnMonitor_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleMonitorOverlay();
     }
 
     #endregion
@@ -278,6 +306,16 @@ public partial class MainWindow : Window
             _ => "#FF6B6B"
         };
 
+        // 风扇转速颜色
+        var fanColor = gpu.FanSpeed switch
+        {
+            0 => "#5C5F66",       // 灰色 - 停转/被动散热
+            < 30 => "#51CF66",   // 绿色 - 低转速
+            < 60 => "#4DABF7",   // 蓝色 - 中转速
+            < 85 => "#FCC419",   // 黄色 - 高转速
+            _ => "#FF922B"       // 橙色 - 满速
+        };
+
         var card = new Border
         {
             Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2C2E33")!),
@@ -331,7 +369,7 @@ public partial class MainWindow : Window
             Grid.SetRow(metricsGrid.Children[^1], 1);
 
             // 风扇
-            metricsGrid.Children.Add(CreateMetricBlock("🌀 风扇", $"{gpu.FanSpeed}%", "#909296"));
+            metricsGrid.Children.Add(CreateMetricBlock("🌀 风扇", $"{gpu.FanSpeed}%", fanColor));
             Grid.SetColumn(metricsGrid.Children[^1], 1);
             Grid.SetRow(metricsGrid.Children[^1], 1);
         }
@@ -512,12 +550,35 @@ public partial class MainWindow : Window
     private void SaveConfig()
     {
         ApplyConfigFromUi();
+
+        // 保留已有的窗口位置信息
+        int? existingX = null, existingY = null;
+        try
+        {
+            if (File.Exists(ConfigPath))
+            {
+                var existing = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(ConfigPath));
+                if (existing != null)
+                {
+                    existingX = existing.WindowX;
+                    existingY = existing.WindowY;
+                }
+            }
+        }
+        catch { }
+
         var config = new AppConfig(
             _ssh.Host,
             _ssh.UserName,
             _ssh.Password,
             _ssh.Port,
-            GetIntervalSeconds()
+            GetIntervalSeconds(),
+            existingX,
+            existingY,
+            GetComboTag(CmbOverlayEdge, "Right"),
+            ChkCompact.IsChecked ?? false,
+            double.TryParse(GetComboTag(CmbOpacity, "0.7"), out var op) ? op : 0.7,
+            GetComboTag(CmbAlignment, "Center")
         );
 
         try
@@ -547,6 +608,11 @@ public partial class MainWindow : Window
                     TxtPassword.Password = config.Password ?? "";
                     TxtPort.Text = config.Port.ToString();
                     TxtInterval.Text = config.IntervalSeconds.ToString();
+                    // 覆盖层设置
+                    SetComboByTag(CmbOverlayEdge, config.OverlayEdge);
+                    ChkCompact.IsChecked = config.OverlayCompact;
+                    SetComboByTag(CmbOpacity, config.OverlayOpacity.ToString("F1"));
+                    SetComboByTag(CmbAlignment, config.OverlayAlignment);
                     ApplyConfigFromUi();
                     Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [CONFIG] 已加载: {ConfigPath}");
                 }
@@ -564,10 +630,216 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region 托盘图标（简化：任务栏内显示）
+    #region 系统托盘 + 监控覆盖层开关 + 热键
 
-    // 如果需要在关闭时真正退出而不是隐藏，可以右键任务栏图标退出
-    // 此处保留 Hide() 方式，用户可通过任务栏重新激活窗口
+    private const int HOTKEY_ID = 9001;
+    private const int WM_HOTKEY = 0x0312;
+    private const int WM_TRAYICON = 0x8001;
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    // Shell_NotifyIcon（简化版）
+    [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+    private static extern bool Shell_NotifyIcon(uint dwMessage, ref NOTIFYICONDATA lpData);
+    private const uint NIM_ADD = 0;
+    private const uint NIM_DELETE = 2;
+    private const uint NIF_MESSAGE = 1;
+    private const uint NIF_ICON = 2;
+    private const uint NIF_TIP = 4;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct NOTIFYICONDATA
+    {
+        public uint cbSize;
+        public IntPtr hWnd;
+        public uint uID;
+        public uint uFlags;
+        public uint uCallbackMessage;
+        public IntPtr hIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string szTip;
+    }
+
+    private IntPtr _trayHwnd;
+
+    private void SetupSystemTray(IntPtr hwnd)
+    {
+        _trayHwnd = hwnd;
+
+        // 从 icon.png 加载自定义托盘图标
+        var iconPath = Path.Combine(
+            Path.GetDirectoryName(Environment.ProcessPath) ?? ".",
+            "icon.png");
+        var hIcon = IntPtr.Zero;
+        if (File.Exists(iconPath))
+        {
+            try
+            {
+                using var bmp = new System.Drawing.Bitmap(iconPath);
+                hIcon = bmp.GetHicon();
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TRAY] ✓ 已加载自定义图标");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TRAY] 图标加载失败: {ex.Message}");
+            }
+        }
+
+        if (hIcon == IntPtr.Zero)
+            hIcon = LoadIcon(IntPtr.Zero, (IntPtr)32512); // 回退默认
+
+        var nid = new NOTIFYICONDATA
+        {
+            cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATA>(),
+            hWnd = hwnd,
+            uID = 1,
+            uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP,
+            uCallbackMessage = WM_TRAYICON,
+            hIcon = hIcon,
+            szTip = "GPU Monitor"
+        };
+        Shell_NotifyIcon(NIM_ADD, ref nid);
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TRAY] 托盘图标已创建");
+    }
+
+    private void RegisterHotKey(IntPtr hwnd)
+    {
+        const uint MOD_CTRL = 0x0002;
+        const uint MOD_SHIFT = 0x0004;
+        const uint VK_G = 0x47;
+        RegisterHotKey(hwnd, HOTKEY_ID, MOD_CTRL | MOD_SHIFT, VK_G);
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [HOTKEY] Ctrl+Shift+G 切换覆盖层");
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
+        {
+            ToggleMonitorOverlay();
+            handled = true;
+        }
+        if (msg == WM_TRAYICON && lParam.ToInt32() == 0x0205) // WM_RBUTTONUP
+        {
+            ShowTrayContextMenu();
+            handled = true;
+        }
+        if (msg == WM_TRAYICON && lParam.ToInt32() == 0x0203) // WM_LBUTTONDBLCLK
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    private void ShowTrayContextMenu()
+    {
+        var menu = new ContextMenu();
+        var showItem = new MenuItem { Header = "显示主窗口" };
+        showItem.Click += (_, _) => { Show(); WindowState = WindowState.Normal; Activate(); };
+        menu.Items.Add(showItem);
+
+        var monitorItem = new MenuItem { Header = "切换覆盖层 (Ctrl+Shift+G)" };
+        monitorItem.Click += (_, _) => ToggleMonitorOverlay();
+        menu.Items.Add(monitorItem);
+
+        menu.Items.Add(new Separator());
+
+        var exitItem = new MenuItem { Header = "退出" };
+        exitItem.Click += (_, _) => ExitApp();
+        menu.Items.Add(exitItem);
+
+        menu.IsOpen = true;
+    }
+
+    private void ExitApp()
+    {
+        // 清理托盘图标
+        var nid = new NOTIFYICONDATA
+        {
+            cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATA>(),
+            hWnd = _trayHwnd,
+            uID = 1
+        };
+        Shell_NotifyIcon(NIM_DELETE, ref nid);
+
+        _monitorWindow?.Close();
+        _cts?.Cancel();
+        _timer.Stop();
+        Environment.Exit(0);
+    }
+
+    private void ToggleMonitorOverlay()
+    {
+        if (_isMonitorOn)
+        {
+            _monitorWindow?.Close();
+            _monitorWindow = null;
+            _isMonitorOn = false;
+            BtnMonitor.Content = "📺";
+            BtnMonitor.ToolTip = "监控覆盖层 (已关闭)";
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [OVERLAY] 已关闭");
+        }
+        else
+        {
+            OpenMonitorOverlay(applySettings: true);
+            // 主窗口自动最小化到托盘
+            Hide();
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [OVERLAY] 已开启，主窗口已最小化");
+        }
+    }
+
+    private void OpenMonitorOverlay(bool applySettings)
+    {
+        if (applySettings) ApplyConfigFromUi();
+        _monitorWindow = new MonitorWindow();
+        _monitorWindow.Closed += (_, _) =>
+        {
+            _isMonitorOn = false;
+            _monitorWindow = null;
+            BtnMonitor.Content = "📺";
+            BtnMonitor.ToolTip = "监控覆盖层 (已关闭)";
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [OVERLAY] 已关闭");
+        };
+        _monitorWindow.Show();
+        _monitorWindow.ApplyConfigAndStart(
+            _ssh.Host, _ssh.UserName, _ssh.Password, _ssh.Port, GetIntervalSeconds(),
+            GetComboTag(CmbOverlayEdge, "Right"),
+            ChkCompact.IsChecked ?? false,
+            double.TryParse(GetComboTag(CmbOpacity, "0.7"), out var op) ? op : 0.7,
+            GetComboTag(CmbAlignment, "Center")
+        );
+        _isMonitorOn = true;
+        BtnMonitor.Content = "📺✓";
+        BtnMonitor.ToolTip = "监控覆盖层 (已开启) | Ctrl+Shift+G 切换";
+    }
+
+    #endregion
+
+    #region 辅助方法
+
+    private static void SetComboByTag(ComboBox combo, string tag)
+    {
+        foreach (ComboBoxItem item in combo.Items)
+        {
+            if (item.Tag?.ToString() == tag)
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+        combo.SelectedIndex = 0;
+    }
+
+    private static string GetComboTag(ComboBox combo, string defaultTag)
+    {
+        return (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? defaultTag;
+    }
 
     #endregion
 }

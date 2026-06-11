@@ -6,6 +6,7 @@
         xmlns:local="clr-namespace:GpuMonitor"
         mc:Ignorable="d"
         Title="GPU Monitor"
+        Icon="icon.png"
         Topmost="True"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -78,6 +79,14 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <!-- ComboBox 暗色主题 -->
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource BgCard}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
     </Window.Resources>
 
     <Border Background="{StaticResource BgPrimary}"
@@ -102,6 +111,9 @@
                                FontSize="13" FontWeight="SemiBold"
                                VerticalAlignment="Center" Margin="12,0,0,0"/>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,4,0">
+                        <Button x:Name="BtnMonitor" Style="{StaticResource IconButton}"
+                                Content="📺" ToolTip="监控模式"
+                                Click="BtnMonitor_Click"/>
                         <Button x:Name="BtnSettings" Style="{StaticResource IconButton}"
                                 Content="⚙" ToolTip="设置"
                                 Click="BtnSettings_Click"/>
@@ -210,6 +222,78 @@
                             </Button.Template>
                         </Button>
                     </StackPanel>
+
+                    <!-- 覆盖层设置分隔 -->
+                    <Separator Margin="0,10,0,6" Background="{StaticResource BorderColor}" Height="1"/>
+                    <TextBlock Text="📺 监控覆盖层设置"
+                               Foreground="{StaticResource TextSecondary}" FontSize="11"
+                               Margin="0,0,0,6"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="60"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="32"/>
+                            <RowDefinition Height="32"/>
+                            <RowDefinition Height="32"/>
+                            <RowDefinition Height="32"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="停靠:" Grid.Row="0" Grid.Column="0"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center" FontSize="12"/>
+                        <ComboBox x:Name="CmbOverlayEdge" Grid.Row="0" Grid.Column="1"
+                                  Margin="0,0,0,4" Height="26"
+                                  Background="{StaticResource BgCard}"
+                                  BorderBrush="{StaticResource BorderColor}"
+                                  Foreground="{StaticResource TextPrimary}"
+                                  FontSize="12" VerticalContentAlignment="Center">
+                            <ComboBoxItem Content="右侧" Tag="Right"/>
+                            <ComboBoxItem Content="左侧" Tag="Left"/>
+                            <ComboBoxItem Content="顶部" Tag="Top"/>
+                            <ComboBoxItem Content="底部" Tag="Bottom"/>
+                        </ComboBox>
+
+                        <TextBlock Text="排版:" Grid.Row="1" Grid.Column="0"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center" FontSize="12"/>
+                        <CheckBox x:Name="ChkCompact" Grid.Row="1" Grid.Column="1"
+                                  Content="紧凑单行（减少屏幕占用）"
+                                  Foreground="{StaticResource TextPrimary}"
+                                  FontSize="12" VerticalContentAlignment="Center"
+                                  VerticalAlignment="Center"/>
+
+                        <TextBlock Text="透明度:" Grid.Row="2" Grid.Column="0"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center" FontSize="12"/>
+                        <ComboBox x:Name="CmbOpacity" Grid.Row="2" Grid.Column="1"
+                                  Margin="0,0,0,4" Height="26"
+                                  Background="{StaticResource BgCard}"
+                                  BorderBrush="{StaticResource BorderColor}"
+                                  Foreground="{StaticResource TextPrimary}"
+                                  FontSize="12" VerticalContentAlignment="Center">
+                            <ComboBoxItem Content="90%（清晰）" Tag="0.9"/>
+                            <ComboBoxItem Content="70%（推荐）" Tag="0.7"/>
+                            <ComboBoxItem Content="50%（半透）" Tag="0.5"/>
+                            <ComboBoxItem Content="30%（极透）" Tag="0.3"/>
+                        </ComboBox>
+
+                        <TextBlock Text="对齐:" Grid.Row="3" Grid.Column="0"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center" FontSize="12"/>
+                        <ComboBox x:Name="CmbAlignment" Grid.Row="3" Grid.Column="1"
+                                  Margin="0,0,0,4" Height="26"
+                                  Background="{StaticResource BgCard}"
+                                  BorderBrush="{StaticResource BorderColor}"
+                                  Foreground="{StaticResource TextPrimary}"
+                                  FontSize="12" VerticalContentAlignment="Center">
+                            <ComboBoxItem Content="居中" Tag="Center"/>
+                            <ComboBoxItem Content="左对齐" Tag="Left"/>
+                            <ComboBoxItem Content="右对齐" Tag="Right"/>
+                        </ComboBox>
+                    </Grid>
                 </StackPanel>
             </Border>
 

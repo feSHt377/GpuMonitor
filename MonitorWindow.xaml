@@ -1,0 +1,69 @@
+<Window x:Class="GpuMonitor.MonitorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GPU Overlay"
+        Topmost="True"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Width="200" Height="120"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+
+    <Border x:Name="RootBorder"
+            Background="#CC000000"
+            CornerRadius="6"
+            Padding="8,6">
+        <StackPanel>
+            <!-- 正常模式：多行 -->
+            <StackPanel x:Name="NormalPanel">
+                <TextBlock x:Name="TxtGpuName"
+                           Text="--"
+                           Foreground="#C0C0C0"
+                           FontSize="10" FontWeight="Bold"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="0,0,0,4"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="TxtTemp" Text="--°C"
+                               Foreground="#51CF66" FontSize="16" FontWeight="Bold"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Text=" " Width="8"/>
+                    <TextBlock x:Name="TxtUtil" Text="--%"
+                               Foreground="#4DABF7" FontSize="16" FontWeight="Bold"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock x:Name="TxtMem" Text="-- / -- MiB"
+                           Foreground="#909090" FontSize="9"
+                           Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="TxtPowerFan" Text="--W  🌀 --%"
+                           Foreground="#707070" FontSize="9"
+                           Margin="0,1,0,0"/>
+            </StackPanel>
+
+            <!-- 紧凑模式：单行 -->
+            <StackPanel x:Name="CompactPanel" Visibility="Collapsed" Orientation="Horizontal">
+                <TextBlock x:Name="TxtCompactName" Text="--"
+                           Foreground="#C0C0C0" FontSize="11" FontWeight="Bold"
+                           VerticalAlignment="Center" Margin="0,0,6,0"
+                           MaxWidth="120" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="TxtCompactTemp" Text="--°C"
+                           Foreground="#51CF66" FontSize="11" FontWeight="Bold"
+                           VerticalAlignment="Center"/>
+                <TextBlock Text=" " Width="4"/>
+                <TextBlock x:Name="TxtCompactUtil" Text="--%"
+                           Foreground="#4DABF7" FontSize="11" FontWeight="Bold"
+                           VerticalAlignment="Center"/>
+                <TextBlock Text=" " Width="6"/>
+                <TextBlock x:Name="TxtCompactMem" Text="--/--"
+                           Foreground="#909090" FontSize="10"
+                           VerticalAlignment="Center"/>
+                <TextBlock Text=" " Width="6"/>
+                <TextBlock x:Name="TxtCompactPower" Text="--W"
+                           Foreground="#FCC419" FontSize="10"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
