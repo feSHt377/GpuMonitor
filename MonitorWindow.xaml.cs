@@ -64,7 +64,7 @@ public partial class MonitorWindow : Window
     /// <summary>
     /// 应用配置并开始刷新（由主窗口调用）
     /// </summary>
-    public void ApplyConfigAndStart(string host, string user, string password, int port, int intervalSec,
+    public void ApplyConfigAndStart(string host, string user, string password, int port, double intervalSec,
         string overlayEdge = "Right", bool compactMode = false, double opacity = 0.7,
         string alignment = "Center")
     {
@@ -148,7 +148,7 @@ public partial class MonitorWindow : Window
                 _ssh.UserName = root.TryGetProperty("User", out var u) ? u.GetString() ?? "" : "";
                 _ssh.Password = root.TryGetProperty("Password", out var p) ? p.GetString() ?? "" : "";
                 _ssh.Port = root.TryGetProperty("Port", out var port) && port.TryGetInt32(out var pv) ? pv : 22;
-                var interval = root.TryGetProperty("IntervalSeconds", out var iv) && iv.TryGetInt32(out var ivv) ? ivv : 3;
+                var interval = root.TryGetProperty("IntervalSeconds", out var iv) && iv.TryGetDouble(out var ivv) ? ivv : 3.0;
                 _timer.Interval = TimeSpan.FromSeconds(interval);
             }
         }

@@ -24,7 +24,7 @@ public partial class MainWindow : Window
                      "GpuMonitor", "config.json");
 
     // 配置数据结构
-    private record AppConfig(string Host, string User, string Password, int Port, int IntervalSeconds,
+    private record AppConfig(string Host, string User, string Password, int Port, double IntervalSeconds,
         int? WindowX = null, int? WindowY = null,
         string OverlayEdge = "Right", bool OverlayCompact = false, double OverlayOpacity = 0.7,
         string OverlayAlignment = "Center");
@@ -538,13 +538,20 @@ public partial class MainWindow : Window
 
         var interval = GetIntervalSeconds();
         _timer.Interval = TimeSpan.FromSeconds(interval);
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [CONFIG] 刷新间隔={interval:F1}s");
     }
 
-    private int GetIntervalSeconds()
+    private double GetIntervalSeconds()
     {
-        if (double.TryParse(TxtInterval.Text.Trim(), out var sec) && sec >= 1)
-            return (int)sec;
-        return 3;
+        // 最小刷新间隔 0.1 秒，避免过于频繁的 SSH 请求
+        const double MinInterval = 0.1;
+        const double DefaultInterval = 3.0;
+        if (double.TryParse(TxtInterval.Text.Trim(), out var sec) && sec >= MinInterval)
+            return sec;
+        // 如果输入值小于最小值，使用最小值
+        if (double.TryParse(TxtInterval.Text.Trim(), out var smallSec) && smallSec > 0)
+            return MinInterval;
+        return DefaultInterval;
     }
 
     private void SaveConfig()
