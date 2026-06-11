@@ -8,6 +8,20 @@ namespace GpuMonitor;
 /// </summary>
 public class SshService
 {
+    // 静态编译正则（避免每次解析时重新编译）
+    private static readonly Regex DriverVersionRegex = new(@"Driver Version:\s*([\d.]+)", RegexOptions.Compiled);
+    private static readonly Regex CudaVersionRegex = new(@"CUDA Version:\s*([\d.]+)", RegexOptions.Compiled);
+    private static readonly Regex GpuHeaderRegex = new(@"\|\s+(\d+)\s+(.{3,}?)\s{2,}(\w+)\s+\|", RegexOptions.Compiled);
+    private static readonly Regex GpuDetailRegex = new(
+        @"\|\s*(\d+)%\s+(\d+)C\s+(P\d+)\s+(\d+W)\s*/\s*(\d+W)\s*\|\s*(\d+MiB)\s*/\s*(\d+MiB)\s*\|\s*(\d+)%\s+(.+)",
+        RegexOptions.Compiled);
+    private static readonly Regex FanRegex = new(@"(\d+)%", RegexOptions.Compiled);
+    private static readonly Regex TempRegex = new(@"(\d+)C", RegexOptions.Compiled);
+    private static readonly Regex PerfRegex = new(@"(P\d+)", RegexOptions.Compiled);
+    private static readonly Regex PowerRegex = new(@"(\d+W)\s*/\s*(\d+W)", RegexOptions.Compiled);
+    private static readonly Regex MemRegex = new(@"(\d+MiB)\s*/\s*(\d+MiB)", RegexOptions.Compiled);
+    private static readonly Regex LooseGpuRegex = new(@"(\d+)\s+(NVIDIA\s+[\w\s]+?)\s+(On|Off)", RegexOptions.Compiled);
+
     public string Host { get; set; } = "";
     public string UserName { get; set; } = "";
     public string Password { get; set; } = "";
@@ -173,11 +187,11 @@ public class SshService
         // 打印原始输出前500字符用于调试
         Console.WriteLine($"[PARSE] 原始输出预览:\n{raw[..Math.Min(500, raw.Length)]}");
 
-        var driverMatch = Regex.Match(raw, @"Driver Version:\s*([\d.]+)");
+        var driverMatch = DriverVersionRegex.Match(raw);
         if (driverMatch.Success)
             output.DriverVersion = driverMatch.Groups[1].Value;
 
-        var cudaMatch = Regex.Match(raw, @"CUDA Version:\s*([\d.]+)");
+        var cudaMatch = CudaVersionRegex.Match(raw);
         if (cudaMatch.Success)
             output.CudaVersion = cudaMatch.Groups[1].Value;
 
@@ -194,7 +208,7 @@ public class SshService
 
         for (int i = 0; i < lines.Length; i++)
         {
-            var gpuHeaderMatch = Regex.Match(lines[i], @"\|\s+(\d+)\s+(.{3,}?)\s{2,}(\w+)\s+\|");
+            var gpuHeaderMatch = GpuHeaderRegex.Match(lines[i]);
             if (gpuHeaderMatch.Success)
             {
                 var rawName = gpuHeaderMatch.Groups[2].Value.Trim();
@@ -235,8 +249,7 @@ public class SshService
 
     private static void ParseGpuDetailLine(string line, GpuInfo gpu)
     {
-        var match = Regex.Match(line,
-            @"\|\s*(\d+)%\s+(\d+)C\s+(P\d+)\s+(\d+W)\s*/\s*(\d+W)\s*\|\s*(\d+MiB)\s*/\s*(\d+MiB)\s*\|\s*(\d+)%\s+(.+)");
+        var match = GpuDetailRegex.Match(line);
 
         if (match.Success)
         {
@@ -250,12 +263,12 @@ public class SshService
         }
         else
         {
-            var fanMatch = Regex.Match(line, @"(\d+)%");
-            var tempMatch = Regex.Match(line, @"(\d+)C");
-            var perfMatch = Regex.Match(line, @"(P\d+)");
-            var powerMatch = Regex.Match(line, @"(\d+W)\s*/\s*(\d+W)");
-            var memMatch = Regex.Match(line, @"(\d+MiB)\s*/\s*(\d+MiB)");
-            var utilMatch = Regex.Match(line, @"(\d+)%");
+            var fanMatch = FanRegex.Match(line);
+            var tempMatch = TempRegex.Match(line);
+            var perfMatch = PerfRegex.Match(line);
+            var powerMatch = PowerRegex.Match(line);
+            var memMatch = MemRegex.Match(line);
+            var utilMatch = FanRegex.Match(line); // 重新搜索第一个%数字作为利用率
 
             if (fanMatch.Success) gpu.FanSpeed = int.Parse(fanMatch.Groups[1].Value);
             if (tempMatch.Success) gpu.Temperature = int.Parse(tempMatch.Groups[1].Value);
@@ -268,7 +281,7 @@ public class SshService
 
     private static void TryLooseParse(string raw, NvidiaSmiOutput output)
     {
-        var gpuMatches = Regex.Matches(raw, @"(\d+)\s+(NVIDIA\s+[\w\s]+?)\s+(On|Off)");
+        var gpuMatches = LooseGpuRegex.Matches(raw);
         foreach (Match m in gpuMatches)
         {
             output.Gpus.Add(new GpuInfo

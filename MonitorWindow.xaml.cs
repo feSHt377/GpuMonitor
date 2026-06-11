@@ -14,7 +14,7 @@ namespace GpuMonitor;
 public partial class MonitorWindow : Window
 {
     private readonly DispatcherTimer _timer = new();
-    private readonly SshService _ssh = new();
+    private SshService _ssh = null!; // 由主窗口注入
     private bool _isUpdating;
     private CancellationTokenSource? _cts;
 
@@ -64,14 +64,11 @@ public partial class MonitorWindow : Window
     /// <summary>
     /// 应用配置并开始刷新（由主窗口调用）
     /// </summary>
-    public void ApplyConfigAndStart(string host, string user, string password, int port, double intervalSec,
+    public void ApplyConfigAndStart(SshService ssh, int intervalSec,
         string overlayEdge = "Right", bool compactMode = false, double opacity = 0.7,
         string alignment = "Center")
     {
-        _ssh.Host = host;
-        _ssh.UserName = user;
-        _ssh.Password = password;
-        _ssh.Port = port;
+        _ssh = ssh;
         _timer.Interval = TimeSpan.FromSeconds(intervalSec);
         _overlayEdge = overlayEdge;
         _compactMode = compactMode;
@@ -205,9 +202,9 @@ public partial class MonitorWindow : Window
             };
             TxtCompactName.Text = gpu.Name.Length > 14 ? gpu.Name[..14] : gpu.Name;
             TxtCompactTemp.Text = $"{gpu.Temperature}°C";
-            TxtCompactTemp.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(GetTempColor(gpu.Temperature))!);
+            TxtCompactTemp.Foreground = BrushCache.GetTempBrush(gpu.Temperature);
             TxtCompactUtil.Text = $"{gpu.GpuUtilization}%";
-            TxtCompactUtil.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(GetUtilColor(gpu.GpuUtilization))!);
+            TxtCompactUtil.Foreground = BrushCache.GetUtilBrush(gpu.GpuUtilization);
 
             if (!string.IsNullOrEmpty(gpu.MemoryUsage))
             {
@@ -228,9 +225,9 @@ public partial class MonitorWindow : Window
             };
             TxtGpuName.Text = gpu.Name.Length > 28 ? gpu.Name[..28] : gpu.Name;
             TxtTemp.Text = $"{gpu.Temperature}°C";
-            TxtTemp.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(GetTempColor(gpu.Temperature))!);
+            TxtTemp.Foreground = BrushCache.GetTempBrush(gpu.Temperature);
             TxtUtil.Text = $"{gpu.GpuUtilization}%";
-            TxtUtil.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(GetUtilColor(gpu.GpuUtilization))!);
+            TxtUtil.Foreground = BrushCache.GetUtilBrush(gpu.GpuUtilization);
 
             if (!string.IsNullOrEmpty(gpu.MemoryUsage))
             {
@@ -244,15 +241,6 @@ public partial class MonitorWindow : Window
                 : $"🌀{gpu.FanSpeed}%";
         }
     }
-
-    private static string GetTempColor(int t) => t switch
-    {
-        < 50 => "#51CF66", < 70 => "#FCC419", < 85 => "#FF922B", _ => "#FF6B6B"
-    };
-    private static string GetUtilColor(int u) => u switch
-    {
-        < 30 => "#51CF66", < 70 => "#FCC419", < 90 => "#FF922B", _ => "#FF6B6B"
-    };
 
     private static double ParseMem(string s)
     {

@@ -4,18 +4,21 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:GpuMonitor"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         Title="GPU Monitor"
         Icon="icon.png"
         Topmost="True"
-        WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
         ResizeMode="CanResizeWithGrip"
         Width="360" MinWidth="300"
         Height="520" MinHeight="200"
+        Background="{StaticResource BgPrimary}"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome GlassFrameThickness="0" CornerRadius="0"
+                            CaptionHeight="36" ResizeBorderThickness="4"/>
+    </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
         <SolidColorBrush x:Key="BgPrimary" Color="#1A1B1E"/>
@@ -29,6 +32,8 @@
         <SolidColorBrush x:Key="AccentOrange" Color="#FF922B"/>
         <SolidColorBrush x:Key="AccentRed" Color="#FF6B6B"/>
         <SolidColorBrush x:Key="AccentBlue" Color="#4DABF7"/>
+
+        <local:GpuColorConverter x:Key="ColorConverter"/>
 
         <Style x:Key="CloseButton" TargetType="Button">
             <Setter Property="Width" Value="28"/>
@@ -89,22 +94,18 @@
         </Style>
     </Window.Resources>
 
-    <Border Background="{StaticResource BgPrimary}"
-            BorderBrush="{StaticResource BorderColor}"
-            BorderThickness="1"
-            CornerRadius="10">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-            <!-- 标题栏 -->
-            <Border Grid.Row="0" Background="{StaticResource BgSecondary}"
-                    CornerRadius="9,9,0,0" Height="36"
-                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+        <!-- 标题栏 -->
+        <Border Grid.Row="0" Background="{StaticResource BgSecondary}"
+                Height="36" shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid>
                     <TextBlock Text="🎮 GPU Monitor"
                                Foreground="{StaticResource TextPrimary}"
@@ -299,9 +300,10 @@
 
             <!-- GPU 信息区域 -->
             <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="GpuStackPanel" Margin="8,8,8,0">
+                <StackPanel Margin="8,8,8,0">
                     <Border x:Name="NoDataBorder" Background="{StaticResource BgCard}"
-                            CornerRadius="6" Padding="20" Margin="0,12">
+                            CornerRadius="6" Padding="20" Margin="0,12"
+                            Visibility="Collapsed">
                         <StackPanel HorizontalAlignment="Center">
                             <TextBlock Text="📡" FontSize="32" HorizontalAlignment="Center"/>
                             <TextBlock x:Name="TxtNoData" Text="请配置 SSH 连接后开始监控"
@@ -312,12 +314,101 @@
                     <TextBlock x:Name="TxtDriverInfo" Foreground="{StaticResource TextSecondary}"
                                FontSize="11" Margin="4,0,4,8" TextWrapping="Wrap"
                                Visibility="Collapsed"/>
+                    <ItemsControl x:Name="GpuListControl"
+                                  ItemsSource="{Binding GpuList}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource BgCard}"
+                                        CornerRadius="6"
+                                        BorderBrush="{StaticResource BorderColor}"
+                                        BorderThickness="1"
+                                        Padding="12" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name, StringFormat='⚡ GPU {0}'}"
+                                                   Foreground="{StaticResource TextPrimary}"
+                                                   FontSize="12" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Margin="0,0,0,8"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <!-- 温度 -->
+                                            <Border Grid.Column="0"
+                                                    Background="{StaticResource BgSecondary}"
+                                                    CornerRadius="4" Padding="8,6" Margin="0,0,4,4">
+                                                <StackPanel>
+                                                    <TextBlock Text="🌡 温度" FontSize="10"
+                                                               Foreground="{StaticResource TextSecondary}"/>
+                                                    <TextBlock Text="{Binding Temperature, StringFormat='{}{0}°C'}"
+                                                               FontSize="18" FontWeight="Bold"
+                                                               Foreground="{Binding Temperature,
+                                                                 Converter={StaticResource ColorConverter},
+                                                                 ConverterParameter=temp}"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <!-- 利用率 -->
+                                            <Border Grid.Column="1"
+                                                    Background="{StaticResource BgSecondary}"
+                                                    CornerRadius="4" Padding="8,6" Margin="0,0,0,4">
+                                                <StackPanel>
+                                                    <TextBlock Text="📊 利用率" FontSize="10"
+                                                               Foreground="{StaticResource TextSecondary}"/>
+                                                    <TextBlock Text="{Binding GpuUtilization, StringFormat='{}{0}%'}"
+                                                               FontSize="18" FontWeight="Bold"
+                                                               Foreground="{Binding GpuUtilization,
+                                                                 Converter={StaticResource ColorConverter},
+                                                                 ConverterParameter=util}"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                        <!-- 功耗 + 风扇 -->
+                                        <Grid Margin="0,4,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0"
+                                                    Background="{StaticResource BgSecondary}"
+                                                    CornerRadius="4" Padding="8,6" Margin="0,0,4,0">
+                                                <StackPanel>
+                                                    <TextBlock Text="⚡ 功耗" FontSize="10"
+                                                               Foreground="{StaticResource TextSecondary}"/>
+                                                    <TextBlock Text="{Binding PowerUsage}"
+                                                               FontSize="18" FontWeight="Bold"
+                                                               Foreground="{StaticResource AccentBlue}"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="1"
+                                                    Background="{StaticResource BgSecondary}"
+                                                    CornerRadius="4" Padding="8,6" Margin="0,0,0,0">
+                                                <StackPanel>
+                                                    <TextBlock Text="🌀 风扇" FontSize="10"
+                                                               Foreground="{StaticResource TextSecondary}"/>
+                                                    <TextBlock Text="{Binding FanSpeed, StringFormat='{}{0}%'}"
+                                                               FontSize="18" FontWeight="Bold"
+                                                               Foreground="{Binding FanSpeed,
+                                                                 Converter={StaticResource ColorConverter},
+                                                                 ConverterParameter=fan}"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                        <!-- 显存 -->
+                                        <TextBlock Text="{Binding MemoryUsage, StringFormat='💾 显存: {0}'}"
+                                                   Foreground="{StaticResource TextSecondary}"
+                                                   FontSize="10" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </ScrollViewer>
 
             <!-- 状态栏 -->
             <Border Grid.Row="3" Background="{StaticResource BgSecondary}"
-                    CornerRadius="0,0,9,9" Height="28" Padding="10,0">
+                    Height="28" Padding="10,0">
                 <Grid>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Ellipse x:Name="StatusDot" Width="8" Height="8"
@@ -335,5 +426,4 @@
                 </Grid>
             </Border>
         </Grid>
-    </Border>
 </Window>
