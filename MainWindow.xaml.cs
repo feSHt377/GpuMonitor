@@ -155,9 +155,10 @@ public partial class MainWindow : Window
             return;
 
         var interval = GetIntervalSeconds();
+        _timer.Stop(); // 先停止，确保新间隔生效
         _timer.Interval = TimeSpan.FromSeconds(interval);
         _timer.Start();
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TIMER] 开始定时刷新, 间隔={interval}秒");
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TIMER] 刷新间隔更新为 {interval}秒");
 
         _ = RefreshGpuData();
     }
