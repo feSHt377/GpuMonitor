@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "启动并调试 GPU Monitor",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}/GpuMonitor.csproj",
+            "requireExactSource": false
+        }
+    ]
+}

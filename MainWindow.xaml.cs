@@ -14,50 +14,53 @@ public partial class MainWindow : Window
     private readonly SshService _ssh = new();
     private readonly DispatcherTimer _timer = new();
     private bool _isUpdating;
+    private CancellationTokenSource? _cts;
     private static readonly string ConfigPath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                      "GpuMonitor", "config.json");
 
     // 配置数据结构
-    private record AppConfig(string Host, string User, int Port, int IntervalSeconds);
+    private record AppConfig(string Host, string User, string Password, int Port, int IntervalSeconds);
 
     public MainWindow()
     {
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] === GPU Monitor 启动 ===");
         InitializeComponent();
 
         // 加载配置
         LoadConfig();
 
         // 设置定时器
-        _timer.Tick += async (_, _) => await RefreshGpuData();
+        _timer.Tick += async (_, _) =>
+        {
+            try { await RefreshGpuData(); }
+            catch (Exception ex) { Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TIMER] 未捕获异常: {ex.Message}"); }
+        };
     }
 
-    private void Window_Loaded(object sender, RoutedEventArgs e)
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        // 如果没有配置，自动展开设置面板
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [UI] Window_Loaded");
         if (string.IsNullOrWhiteSpace(_ssh.Host) || string.IsNullOrWhiteSpace(_ssh.UserName))
         {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [UI] 无已保存配置，展开设置面板");
             SettingsPanel.Visibility = Visibility.Visible;
         }
         else
         {
-            // 自动开始监控
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [UI] 已加载配置: {_ssh.UserName}@{_ssh.Host}:{_ssh.Port}, 间隔={GetIntervalSeconds()}s");
+            await Task.Delay(300);
             StartMonitoring();
         }
     }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        _cts?.Cancel();
         _timer.Stop();
     }
 
     #region 窗口拖动
-
-    private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ChangedButton == MouseButton.Left)
-            DragMove();
-    }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -92,9 +95,9 @@ public partial class MainWindow : Window
 
     private void BtnClose_Click(object sender, RoutedEventArgs e)
     {
-        // 最小化到系统托盘（这里简化处理为隐藏窗口）
-        Hide();
+        _cts?.Cancel();
         _timer.Stop();
+        Hide();
     }
 
     private void BtnSave_Click(object sender, RoutedEventArgs e)
@@ -151,23 +154,37 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_ssh.Host) || string.IsNullOrWhiteSpace(_ssh.UserName))
             return;
 
-        _timer.Interval = TimeSpan.FromSeconds(GetIntervalSeconds());
+        var interval = GetIntervalSeconds();
+        _timer.Interval = TimeSpan.FromSeconds(interval);
         _timer.Start();
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [TIMER] 开始定时刷新, 间隔={interval}秒");
 
-        // 立即刷新一次
         _ = RefreshGpuData();
     }
 
     private async Task RefreshGpuData()
     {
-        if (_isUpdating) return;
+        if (_isUpdating)
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [REFRESH] 跳过（上一次刷新仍在进行中）");
+            return;
+        }
         _isUpdating = true;
+
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
 
         try
         {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [REFRESH] 开始获取 GPU 数据...");
             UpdateStatus("正在获取 GPU 数据...", Colors.Orange);
 
-            var result = await _ssh.QueryGpuAsync();
+            var result = await _ssh.QueryGpuAsync(token);
+
+            if (token.IsCancellationRequested) return;
+
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [REFRESH] 收到结果: Success={result.Success}, GPU数={result.Gpus.Count}");
 
             await Dispatcher.InvokeAsync(() =>
             {
@@ -183,8 +200,13 @@ public partial class MainWindow : Window
                 }
             });
         }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [REFRESH] 已被取消");
+        }
         catch (Exception ex)
         {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [REFRESH] 异常: {ex.GetType().Name}: {ex.Message}");
             await Dispatcher.InvokeAsync(() =>
             {
                 UpdateStatus($"异常: {ex.Message}", Colors.Red);
@@ -230,6 +252,13 @@ public partial class MainWindow : Window
 
     private Border CreateGpuCard(GpuInfo gpu)
     {
+        // 防御：跳过无效的GPU条目
+        if (string.IsNullOrWhiteSpace(gpu.Name) || gpu.Name == "N/A")
+        {
+            Console.WriteLine($"[UI] 跳过无效GPU: Index={gpu.Index}, Name='{gpu.Name}'");
+            return new Border { Height = 0 }; // 返回空元素
+        }
+
         // 温度颜色
         var tempColor = gpu.Temperature switch
         {
@@ -464,6 +493,7 @@ public partial class MainWindow : Window
     {
         _ssh.Host = TxtHost.Text.Trim();
         _ssh.UserName = TxtUser.Text.Trim();
+        _ssh.Password = TxtPassword.Password;
         if (int.TryParse(TxtPort.Text.Trim(), out var port))
             _ssh.Port = port;
 
@@ -484,6 +514,7 @@ public partial class MainWindow : Window
         var config = new AppConfig(
             _ssh.Host,
             _ssh.UserName,
+            _ssh.Password,
             _ssh.Port,
             GetIntervalSeconds()
         );
@@ -512,13 +543,22 @@ public partial class MainWindow : Window
                 {
                     TxtHost.Text = config.Host;
                     TxtUser.Text = config.User;
+                    TxtPassword.Password = config.Password ?? "";
                     TxtPort.Text = config.Port.ToString();
                     TxtInterval.Text = config.IntervalSeconds.ToString();
                     ApplyConfigFromUi();
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [CONFIG] 已加载: {ConfigPath}");
                 }
             }
+            else
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [CONFIG] 未找到配置文件: {ConfigPath}");
+            }
         }
-        catch { /* 忽略加载错误 */ }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [CONFIG] 加载失败: {ex.Message}");
+        }
     }
 
     #endregion

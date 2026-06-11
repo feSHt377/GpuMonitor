@@ -13,7 +13,6 @@
         ResizeMode="CanResizeWithGrip"
         Width="360" MinWidth="300"
         Height="520" MinHeight="200"
-        MouseLeftButtonDown="Window_MouseLeftButtonDown"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
 
@@ -132,6 +131,7 @@
                             <RowDefinition Height="32"/>
                             <RowDefinition Height="32"/>
                             <RowDefinition Height="32"/>
+                            <RowDefinition Height="32"/>
                         </Grid.RowDefinitions>
 
                         <TextBlock Text="主机:" Foreground="{StaticResource TextSecondary}"
@@ -153,20 +153,31 @@
                                  CaretBrush="{StaticResource TextPrimary}"
                                  FontSize="12" Padding="6,4" VerticalContentAlignment="Center"/>
 
-                        <TextBlock Text="端口:" Grid.Row="2" Grid.Column="0"
+                        <TextBlock Text="密码:" Grid.Row="2" Grid.Column="0"
                                    Foreground="{StaticResource TextSecondary}"
                                    VerticalAlignment="Center" FontSize="12"/>
-                        <TextBox x:Name="TxtPort" Grid.Row="2" Grid.Column="1"
+                        <PasswordBox x:Name="TxtPassword" Grid.Row="2" Grid.Column="1"
+                                     Margin="0,0,0,4" Background="{StaticResource BgCard}"
+                                     BorderBrush="{StaticResource BorderColor}"
+                                     Foreground="{StaticResource TextPrimary}"
+                                     CaretBrush="{StaticResource TextPrimary}"
+                                     FontSize="12" Padding="6,4"
+                                     VerticalContentAlignment="Center"/>
+
+                        <TextBlock Text="端口:" Grid.Row="3" Grid.Column="0"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center" FontSize="12"/>
+                        <TextBox x:Name="TxtPort" Grid.Row="3" Grid.Column="1"
                                  Text="22" Margin="0,0,0,4" Background="{StaticResource BgCard}"
                                  BorderBrush="{StaticResource BorderColor}"
                                  Foreground="{StaticResource TextPrimary}"
                                  CaretBrush="{StaticResource TextPrimary}"
                                  FontSize="12" Padding="6,4" VerticalContentAlignment="Center"/>
 
-                        <TextBlock Text="刷新(s):" Grid.Row="3" Grid.Column="0"
+                        <TextBlock Text="刷新(s):" Grid.Row="4" Grid.Column="0"
                                    Foreground="{StaticResource TextSecondary}"
                                    VerticalAlignment="Center" FontSize="12"/>
-                        <TextBox x:Name="TxtInterval" Grid.Row="3" Grid.Column="1"
+                        <TextBox x:Name="TxtInterval" Grid.Row="4" Grid.Column="1"
                                  Text="3" Background="{StaticResource BgCard}"
                                  BorderBrush="{StaticResource BorderColor}"
                                  Foreground="{StaticResource TextPrimary}"

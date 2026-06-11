@@ -1,142 +1,178 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Renci.SshNet;
 
 namespace GpuMonitor;
 
 /// <summary>
-/// SSH 服务——使用 Windows 自带 ssh.exe 远程执行 nvidia-smi
+/// SSH 服务——使用 SSH.NET 远程执行 nvidia-smi（支持密码认证）
 /// </summary>
 public class SshService
 {
     public string Host { get; set; } = "";
     public string UserName { get; set; } = "";
+    public string Password { get; set; } = "";
     public int Port { get; set; } = 22;
-    public int TimeoutSeconds { get; set; } = 15;
+    public int TimeoutSeconds { get; set; } = 8;
 
-    /// <summary>
-    /// 执行 nvidia-smi 命令并解析结果
-    /// </summary>
-    public async Task<NvidiaSmiOutput> QueryGpuAsync()
+    public async Task<NvidiaSmiOutput> QueryGpuAsync(CancellationToken ct = default)
     {
         var result = new NvidiaSmiOutput();
 
         if (string.IsNullOrWhiteSpace(Host) || string.IsNullOrWhiteSpace(UserName))
         {
             result.Success = false;
-            result.ErrorMessage = "请先配置 SSH 连接信息（主机、用户名）";
+            result.ErrorMessage = "请先配置 SSH 连接信息（主机、用户名、密码）";
+            Log("[SKIP] 未配置 SSH 连接信息");
+            return result;
+        }
+
+        if (string.IsNullOrWhiteSpace(Password))
+        {
+            result.Success = false;
+            result.ErrorMessage = "请输入 SSH 密码";
+            Log("[SKIP] 未提供密码");
             return result;
         }
 
         try
         {
-            var psi = new ProcessStartInfo
+            Log($"[SSH] 连接 {UserName}@{Host}:{Port} (密码认证) ...");
+            Log($"[SSH] 超时设置: {TimeoutSeconds}秒");
+
+            ct.ThrowIfCancellationRequested();
+
+            using var client = new SshClient(Host, Port, UserName, Password);
+            client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(TimeoutSeconds);
+
+            Log("[SSH] 正在建立 SSH 连接...");
+            await Task.Run(() => client.Connect(), ct);
+            Log($"[SSH] ✓ SSH 连接已建立");
+
+            if (!client.IsConnected)
             {
-                FileName = "ssh",
-                Arguments = BuildSshArgs("nvidia-smi"),
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8
-            };
-
-            using var process = new Process { StartInfo = psi };
-            process.Start();
-
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-
-            var completed = process.WaitForExit(TimeSpan.FromSeconds(TimeoutSeconds));
-            if (!completed)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
                 result.Success = false;
-                result.ErrorMessage = $"SSH 连接超时（{TimeoutSeconds}秒）";
+                result.ErrorMessage = "SSH 连接失败";
+                Log("[SSH] ✗ 连接失败");
                 return result;
             }
 
-            var stdout = await outputTask;
-            var stderr = await errorTask;
+            Log("[SSH] 执行命令: nvidia-smi");
+            ct.ThrowIfCancellationRequested();
 
-            if (process.ExitCode != 0 || !string.IsNullOrEmpty(stderr))
+            using var cmd = client.CreateCommand("nvidia-smi");
+            cmd.CommandTimeout = TimeSpan.FromSeconds(TimeoutSeconds);
+
+            var stdout = await Task.Run(() => cmd.Execute(), ct);
+            var stderr = cmd.Error ?? "";
+            var exitCode = cmd.ExitStatus;
+            Log($"[SSH] 命令完成: ExitCode={exitCode}, stdout={stdout?.Length ?? 0}字符, stderr={stderr.Length}字符");
+
+            if (exitCode != 0 && string.IsNullOrWhiteSpace(stdout))
             {
-                // nvidia-smi 输出到 stderr 有时也正常，尝试从 stdout 解析
-                if (string.IsNullOrWhiteSpace(stdout) && !string.IsNullOrEmpty(stderr))
+                if (!string.IsNullOrWhiteSpace(stderr))
                 {
                     stdout = stderr;
+                    Log("[SSH] stdout为空，使用stderr作为输出");
                 }
-
-                if (string.IsNullOrWhiteSpace(stdout))
+                else
                 {
                     result.Success = false;
-                    result.ErrorMessage = $"SSH 执行失败 (exit={process.ExitCode}): {stderr}";
+                    result.ErrorMessage = $"nvidia-smi 执行失败 (exit={exitCode}): {stderr}";
+                    Log($"[SSH] ✗ 执行失败: {result.ErrorMessage}");
                     return result;
                 }
             }
 
-            result = ParseNvidiaSmi(stdout);
+            client.Disconnect();
+            Log("[SSH] 已断开连接");
+
+            Log($"[PARSE] 开始解析 nvidia-smi 输出...");
+            result = ParseNvidiaSmi(stdout ?? "");
             result.Success = result.Gpus.Count > 0;
             if (!result.Success && string.IsNullOrEmpty(result.ErrorMessage))
                 result.ErrorMessage = "未检测到 GPU 信息";
+            Log($"[PARSE] 完成: Success={result.Success}, GPU={result.Gpus.Count}, 驱动={result.DriverVersion}");
+        }
+        catch (OperationCanceledException)
+        {
+            result.Success = false;
+            result.ErrorMessage = "请求已取消";
+            Log("[SSH] ⚠ 请求已被取消");
+        }
+        catch (Renci.SshNet.Common.SshAuthenticationException ex)
+        {
+            result.Success = false;
+            result.ErrorMessage = $"SSH 认证失败: {ex.Message}";
+            Log($"[SSH] ✗ 认证失败: {ex.Message}");
+        }
+        catch (Renci.SshNet.Common.SshConnectionException ex)
+        {
+            result.Success = false;
+            result.ErrorMessage = $"SSH 连接失败: {ex.Message}";
+            Log($"[SSH] ✗ 连接失败: {ex.Message}");
         }
         catch (Exception ex)
         {
             result.Success = false;
             result.ErrorMessage = $"连接错误: {ex.Message}";
+            Log($"[SSH] ✗ 异常: {ex.GetType().Name}: {ex.Message}");
         }
 
         return result;
     }
 
-    /// <summary>
-    /// 测试 SSH 连接
-    /// </summary>
     public async Task<(bool success, string message)> TestConnectionAsync()
     {
+        Log($"[TEST] 测试连接 {UserName}@{Host}:{Port} (密码认证) ...");
+
+        if (string.IsNullOrWhiteSpace(Password))
+        {
+            Log("[TEST] ✗ 未提供密码");
+            return (false, "请输入 SSH 密码");
+        }
+
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "ssh",
-                Arguments = BuildSshArgs("echo connected"),
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            using var client = new SshClient(Host, Port, UserName, Password);
+            client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(TimeoutSeconds);
 
-            using var process = new Process { StartInfo = psi };
-            process.Start();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            var completed = process.WaitForExit(TimeSpan.FromSeconds(TimeoutSeconds));
+            Log("[TEST] 正在建立连接...");
+            await Task.Run(() => client.Connect());
 
-            if (!completed)
+            if (client.IsConnected)
             {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                return (false, "连接超时");
+                client.Disconnect();
+                Log("[TEST] ✓ 连接成功");
+                return (true, "连接成功！");
             }
 
-            if (process.ExitCode == 0)
-                return (true, "连接成功！");
-            else
-                return (false, $"连接失败: {stderr}");
+            Log("[TEST] ✗ 连接失败");
+            return (false, "连接失败");
+        }
+        catch (Renci.SshNet.Common.SshAuthenticationException ex)
+        {
+            Log($"[TEST] ✗ 认证失败: {ex.Message}");
+            return (false, $"认证失败，请检查用户名/密码: {ex.Message}");
+        }
+        catch (Renci.SshNet.Common.SshConnectionException ex)
+        {
+            Log($"[TEST] ✗ 连接失败: {ex.Message}");
+            return (false, $"无法连接主机: {ex.Message}");
         }
         catch (Exception ex)
         {
+            Log($"[TEST] ✗ 异常: {ex.Message}");
             return (false, $"连接错误: {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// 解析 nvidia-smi 输出
-    /// </summary>
     private static NvidiaSmiOutput ParseNvidiaSmi(string raw)
     {
         var output = new NvidiaSmiOutput { RawOutput = raw };
 
-        // 提取驱动版本和 CUDA 版本
+        // 打印原始输出前500字符用于调试
+        Console.WriteLine($"[PARSE] 原始输出预览:\n{raw[..Math.Min(500, raw.Length)]}");
+
         var driverMatch = Regex.Match(raw, @"Driver Version:\s*([\d.]+)");
         if (driverMatch.Success)
             output.DriverVersion = driverMatch.Groups[1].Value;
@@ -145,57 +181,60 @@ public class SshService
         if (cudaMatch.Success)
             output.CudaVersion = cudaMatch.Groups[1].Value;
 
-        // 解析每一个 GPU
-        // nvidia-smi 表格中 GPU 信息的行模式：
-        // |   0  NVIDIA GeForce ...    Off | 00000000:01:00.0  On |                  N/A |
-        // | 30%   65C    P2    150W / 300W |   8000MiB / 24576MiB |     85%      Default |
-        // 这两行构成一张 GPU 的完整信息
+        // 截断到 Processes 部分之前，避免把进程行误解析为 GPU
+        var gpuSection = raw;
+        var processesIdx = raw.IndexOf("Processes:", StringComparison.OrdinalIgnoreCase);
+        if (processesIdx > 0)
+        {
+            gpuSection = raw[..processesIdx];
+            Console.WriteLine($"[PARSE] 在位置 {processesIdx} 截断 Processes 部分, 剩余 {gpuSection.Length} 字符");
+        }
 
-        var lines = raw.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var lines = gpuSection.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
 
         for (int i = 0; i < lines.Length; i++)
         {
-            var line = lines[i];
-
-            // 匹配第一行：GPU 索引和名称
-            // |   0  NVIDIA GeForce RTX 4090 ...    Off |
-            var gpuHeaderMatch = Regex.Match(line, @"\|\s+(\d+)\s+(.{3,}?)\s{2,}(\w+)\s+\|");
+            var gpuHeaderMatch = Regex.Match(lines[i], @"\|\s+(\d+)\s+(.{3,}?)\s{2,}(\w+)\s+\|");
             if (gpuHeaderMatch.Success)
             {
+                var rawName = gpuHeaderMatch.Groups[2].Value.Trim();
+
+                // 过滤掉非 GPU 行（如进程行中误匹配的 N/A）
+                if (rawName.Equals("N/A", StringComparison.OrdinalIgnoreCase)
+                    || rawName.StartsWith("N/A ", StringComparison.OrdinalIgnoreCase)
+                    || rawName.All(c => c == ' ' || c == '-' || c == '='))
+                {
+                    Console.WriteLine($"[PARSE] 跳过非GPU行: '{rawName}'");
+                    continue;
+                }
+
                 var gpu = new GpuInfo
                 {
                     Index = int.Parse(gpuHeaderMatch.Groups[1].Value),
-                    Name = gpuHeaderMatch.Groups[2].Value.Trim()
+                    Name = rawName
                 };
 
-                // 第二行包含风扇、温度、功耗、显存、利用率
                 if (i + 1 < lines.Length)
-                {
-                    var detailLine = lines[i + 1];
-                    ParseGpuDetailLine(detailLine, gpu);
-                }
+                    ParseGpuDetailLine(lines[i + 1], gpu);
 
                 output.Gpus.Add(gpu);
-                i++; // 跳过已解析的第二行
+                Console.WriteLine($"[PARSE] GPU[{gpu.Index}]: {gpu.Name} | {gpu.Temperature}°C | {gpu.GpuUtilization}% | 显存={gpu.MemoryUsage} | 功耗={gpu.PowerUsage}");
+                i++;
             }
         }
 
-        // 备用解析：尝试用 --query-compute-apps 或更灵活的方式
         if (output.Gpus.Count == 0)
         {
-            // 尝试更宽松的匹配
+            Console.WriteLine("[PARSE] 标准解析失败，尝试宽松匹配...");
             TryLooseParse(raw, output);
+            Console.WriteLine($"[PARSE] 宽松匹配: {output.Gpus.Count} 张GPU");
         }
 
         return output;
     }
 
-    /// <summary>
-    /// 解析 GPU 详情行：风扇 温度 性能 功耗 | 显存 | 利用率
-    /// </summary>
     private static void ParseGpuDetailLine(string line, GpuInfo gpu)
     {
-        // | 30%   65C    P2    150W / 300W |   8000MiB / 24576MiB |     85%      Default |
         var match = Regex.Match(line,
             @"\|\s*(\d+)%\s+(\d+)C\s+(P\d+)\s+(\d+W)\s*/\s*(\d+W)\s*\|\s*(\d+MiB)\s*/\s*(\d+MiB)\s*\|\s*(\d+)%\s+(.+)");
 
@@ -211,7 +250,6 @@ public class SshService
         }
         else
         {
-            // 尝试宽松匹配
             var fanMatch = Regex.Match(line, @"(\d+)%");
             var tempMatch = Regex.Match(line, @"(\d+)C");
             var perfMatch = Regex.Match(line, @"(P\d+)");
@@ -228,12 +266,8 @@ public class SshService
         }
     }
 
-    /// <summary>
-    /// 当标准表格解析失败时的备用宽松解析
-    /// </summary>
     private static void TryLooseParse(string raw, NvidiaSmiOutput output)
     {
-        // 查找所有 GPU 行
         var gpuMatches = Regex.Matches(raw, @"(\d+)\s+(NVIDIA\s+[\w\s]+?)\s+(On|Off)");
         foreach (Match m in gpuMatches)
         {
@@ -245,9 +279,14 @@ public class SshService
         }
     }
 
-    private string BuildSshArgs(string command)
+    private static void Log(string msg)
     {
-        var portPart = Port != 22 ? $" -p {Port}" : "";
-        return $"-o StrictHostKeyChecking=no -o ConnectTimeout={TimeoutSeconds}{portPart} {UserName}@{Host} \"{command}\"";
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {msg}");
     }
+}
+
+internal static class StringExtensions
+{
+    public static string Truncate(this string value, int maxLength)
+        => value.Length <= maxLength ? value : value[..maxLength] + "...";
 }
