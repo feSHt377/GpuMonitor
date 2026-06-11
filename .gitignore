@@ -1,0 +1,34 @@
+## .NET / WPF build outputs
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.userosscache
+*.sln.docstates
+
+## Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+*.dbmdl
+*.jfm
+
+## Rider
+.idea/
+*.sln.iml
+
+## NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+## Application config (contains machine-specific SSH credentials)
+GpuMonitor.exe.config
+
+## OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
